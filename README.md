@@ -1,9 +1,10 @@
 ### 项目简介
 
-这个仓库用于对比 **Neo4j** 和 **MySQL** 在「深度关系遍历」场景下的性能差异，并提供：
+这个仓库用于对比 **Neo4j** 和 **MySQL** 在不同「关系查询」场景下的性能表现，包括：
 
+- 长链表型数据的深度遍历基准（`neo_benchmark.py`）
+- 社交网络“朋友的朋友（的朋友）推荐”基准（`friends_benchmark.py`）
 - 构造等价数据的脚本（Neo4j / MySQL 各一份）
-- 基准测试脚本 `neo_benchmark.py`
 - 简单的 Neo4j 连通性测试（`pytest`）
 
 ---
@@ -41,7 +42,7 @@ MYSQL_USER=root
 MYSQL_PASSWORD=
 MYSQL_DB=graph_benchmark
 
-NODE_COUNT=500000
+NODE_COUNT=50000
 ```
 
 你可以根据自己本地环境修改 `.env`，然后在运行脚本前让 shell 自动加载这些变量，例如：
@@ -74,7 +75,7 @@ set +a
 
 ---
 
-### 一、向 Neo4j 插入测试数据
+### 一、长链表场景：向 Neo4j 插入测试数据
 
 脚本：`load_neo4j_data.py`
 
@@ -84,7 +85,7 @@ set +a
   - `NEO4J_URI`：默认 `neo4j://localhost:7687`
   - `NEO4J_USER`：默认 `neo4j`
   - `NEO4J_PASSWORD`：默认 `test`
-  - `NODE_COUNT`：默认 `500000`（50 万节点）
+  - `NODE_COUNT`：默认 `50000`（5 万节点，可在 `.env` 中修改）
 
 **执行方法**：
 
@@ -106,7 +107,7 @@ python load_neo4j_data.py
 
 ---
 
-### 二、向 MySQL 插入测试数据
+### 二、长链表场景：向 MySQL 插入测试数据
 
 脚本：`load_mysql_data.py`
 
@@ -123,7 +124,7 @@ python load_neo4j_data.py
 - `MYSQL_USER`：默认 `root`
 - `MYSQL_PASSWORD`：默认空
 - `MYSQL_DB`：默认 `graph_benchmark`
-- `NODE_COUNT`：默认 `500000`
+- `NODE_COUNT`：默认 `50000`
 
 **执行方法**：
 
@@ -153,38 +154,155 @@ nodes 表：
 
 ---
 
-### 三、运行 Neo4j / MySQL 性能对比基准
-
-脚本：`neo_benchmark.py`
+### 三、长链表场景：Neo4j / MySQL 深度遍历基准（`neo_benchmark.py`）
 
 **功能**：
 
-- 如果需要，会在 Neo4j / MySQL 中构造同样的数据（与上面两个脚本一致）；
-- 然后分别执行多次深度为 5 的遍历：
-  - Neo4j：从起点沿 `:NEXT` 走 5 步；
-  - MySQL：对 `nodes` 表执行 5 层自连接。
+- 假设你已经用 `load_neo4j_data.py` / `load_mysql_data.py` 构造好同样的链式数据；
+- 对比“从起点沿链表走 5 步”的查询性能：
+  - Neo4j：使用可变长度路径匹配 `MATCH p=(n)-[:NEXT*1..5]->(m)`，限制 `length(p)=5`；
+  - MySQL：在 `nodes` 表上做 5 层自连接。
 
 **执行方法**：
 
 ```bash
 cd /Users/tianye/code/neo4jTest
 source .venv/bin/activate
+set -a
+source .env
+set +a
 
-# 确保 Neo4j 服务和 MySQL 服务都已经启动，环境变量同上
+# 确保已经插入链表数据
+python load_neo4j_data.py
+python load_mysql_data.py
 
+# 只做查询基准
 python neo_benchmark.py
 ```
 
-你会看到类似输出：
+在一组典型配置下（5 万节点、depth=5、runs=1），在你的环境中观测到的一个样例结果为：
 
 ```text
-[Neo4j] depth=5, runs=500, avg=... ms, hops=5
-[MySQL] depth=5, runs=500, avg=... ms
+[Neo4j] depth=5, runs=1, avg≈31 ms, hops=5
+[MySQL] depth=5, runs=1, avg≈0.3 ms
+```
+
+说明在“严格单链表 + 主键等值自连接”的场景下，MySQL 更擅长这种访问模式。
+
+---
+
+### 四、社交图场景：构造“好友图”数据
+
+这一组脚本用来构造**高分支度社交网络**，用来测试“朋友的朋友（的朋友）推荐”这类更偏图算法的查询。
+
+#### 1. 向 Neo4j 插入好友图数据（`load_neo4j_friends.py`）
+
+- 模型：
+  - 节点：`(:Person {id})`
+  - 关系：`(:Person)-[:FRIEND]-(:Person)`（内部用两条有向边）
+- 主要参数（可通过环境变量覆盖）：
+  - `FRIEND_PERSON_COUNT`：用户数量，默认 `10000`
+  - `FRIEND_AVG_DEGREE`：平均好友数，默认 `20`
+
+执行示例（与当前实验配置一致的较小规模）：
+
+```bash
+cd /Users/tianye/code/neo4jTest
+source .venv/bin/activate
+set -a
+source .env
+export FRIEND_PERSON_COUNT=2000 FRIEND_AVG_DEGREE=15
+set +a
+
+python load_neo4j_friends.py
+```
+
+#### 2. 向 MySQL 插入好友图数据（`load_mysql_friends.py`）
+
+- 模型：
+  - 表 `persons(id BIGINT PRIMARY KEY)`
+  - 表 `friendships(person_id BIGINT, friend_id BIGINT, KEY idx_person, KEY idx_friend)`
+- 参数同上：
+  - `FRIEND_PERSON_COUNT`、`FRIEND_AVG_DEGREE`
+
+执行示例：
+
+```bash
+cd /Users/tianye/code/neo4jTest
+source .venv/bin/activate
+set -a
+source .env
+export FRIEND_PERSON_COUNT=2000 FRIEND_AVG_DEGREE=15
+set +a
+
+python load_mysql_friends.py
 ```
 
 ---
 
-### 四、Neo4j 连通性测试（可选）
+### 五、社交图场景：“三跳朋友推荐”基准（`friends_benchmark.py`）
+
+**查询问题：**
+
+- 给定某个用户 `u`，查找“朋友的朋友的朋友”（三跳）作为候选推荐；
+- 排除：
+  - 已经是 `u` 的直接好友；
+  - `u` 本人；
+- 对结果去重。
+
+**Neo4j 查询：**
+
+```cypher
+MATCH (u:Person {id: $user_id})-[:FRIEND]->(f1:Person)
+      -[:FRIEND]->(f2:Person)
+      -[:FRIEND]->(f3:Person)
+WHERE NOT (u)-[:FRIEND]->(f3) AND f3 <> u
+RETURN DISTINCT f3.id AS fof_id;
+```
+
+**MySQL 等价查询：**
+
+```sql
+SELECT DISTINCT f3.friend_id AS fof_id
+FROM friendships AS f1
+JOIN friendships AS f2 ON f2.person_id = f1.friend_id
+JOIN friendships AS f3 ON f3.person_id = f2.friend_id
+LEFT JOIN friendships AS already
+  ON already.person_id = f1.person_id
+ AND already.friend_id = f3.friend_id
+WHERE f1.person_id = ?
+  AND f3.friend_id <> f1.person_id
+  AND already.friend_id IS NULL;
+```
+
+**执行方法：**
+
+```bash
+cd /Users/tianye/code/neo4jTest
+source .venv/bin/activate
+set -a
+source .env
+export FRIEND_PERSON_COUNT=2000 FRIEND_AVG_DEGREE=15 FRIEND_BENCHMARK_RUNS=50
+set +a
+
+python load_neo4j_friends.py
+python load_mysql_friends.py
+python friends_benchmark.py
+```
+
+在上述配置下，你当前环境的一次实际跑数结果为：
+
+```text
+Friend-of-friend benchmark for user_id=25, runs=50
+[Neo4j]  avg≈89.6 ms over 50 runs
+[MySQL] avg≈733.8 ms over 50 runs
+```
+
+可以看到，在这种**高分支度 + 多跳 + 去重 + 排除模式匹配**的典型“图查询”场景中，Neo4j 明显快于 MySQL。
+
+---
+
+### 六、Neo4j 连通性测试（可选）
 
 使用 `pytest` 对 Neo4j 做最基本的连通性和读写校验：
 
