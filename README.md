@@ -242,6 +242,9 @@ python load_mysql_friends.py
 
 ### 五、社交图场景：“三跳朋友推荐”基准（`friends_benchmark.py`）
 
+> 说明：为了保证试验公平，本项目采用 **MySQL 生成源数据**，再由 `load_neo4j_friends.py` **从 MySQL 镜像到 Neo4j**。
+> 因此两边数据完全一致，benchmark 也会从同一个固定起点 `user_id` 开始查询（默认 `0`）。
+
 **查询问题：**
 
 - 给定某个用户 `u`，查找“朋友的朋友的朋友”（三跳）作为候选推荐；
@@ -285,10 +288,25 @@ source .env
 export FRIEND_PERSON_COUNT=2000 FRIEND_AVG_DEGREE=15 FRIEND_BENCHMARK_RUNS=5
 set +a
 
-python load_mysql_friends.py
-python load_neo4j_friends.py
-python friends_benchmark.py
+# 一条命令：带 --load 时会自动重建数据并镜像到 Neo4j
+python friends_benchmark.py --load
 ```
+
+也可以只跑 benchmark（假设你之前已经执行过 `--load` 或者已经手动跑过 `load_*` 脚本）：
+
+```bash
+python friends_benchmark.py --runs 5 --user-id 0 --hops 2,3,4
+```
+
+常用参数：
+
+- **`--load`**：自动执行 `load_mysql_friends.py -> load_neo4j_friends.py`，保证两端数据一致且干净
+- **`--person-count`**：用户数量（也可用环境变量 `FRIEND_PERSON_COUNT`）
+- **`--avg-degree`**：平均好友数（也可用环境变量 `FRIEND_AVG_DEGREE`）
+- **`--runs`**：每个 hops 的重复次数（也可用环境变量 `FRIEND_BENCHMARK_RUNS`）
+- **`--user-id`**：固定起点（也可用环境变量 `FRIEND_USER_ID`），默认 `0`
+- **`--random-user`**：随机选择起点（不利于复现）
+- **`--hops`**：逗号分隔的跳数列表（2/3/4），也可用 `FRIEND_HOPS`
 
 在上述配置下，你当前环境的一次实际跑数结果为：
 
